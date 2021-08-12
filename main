@@ -1,0 +1,240 @@
+ ; Archivo:	  main.s  
+ ; Dispositivo:	  PIC16F887
+ ; Autor:	  Javier L�pez
+ ; Compilador:	  pic-as (v2.30), MPLAB V5.50
+ ; 
+ ; Programa:	  Contador hexadecimal de 4 bits en 7 segmentos
+ ; Harware:	  Resistores pulldown, push butons, display 7 segmentos, leds
+ ; 
+ ; Creado: 10 agosto, 2021
+ ; �ltima modificaci�n: 12 agosto, 2021
+  
+ PROCESSOR 16F887
+ #include <xc.inc>
+ 
+ ;configuration word 1
+ CONFIG FOSC=INTRC_NOCLKOUT	// Oscillador Interno sin salidas
+ CONFIG WDTE=OFF    // WDT disabled (reinicio repetitivo del pic)
+ CONFIG PWRTE=ON    // PWRT enabled (espera de 72ms al iniciar)
+ CONFIG MCLRE=OFF   // El pin de MCLR se utiliza como I/O
+ CONFIG CP=OFF	    // Sin protecci�n de c�digo
+ CONFIG CPD=OFF	    // Sin protecci�n de datos
+ 
+ CONFIG BOREN=OFF   // Sin reinicio cuando el voltaje de alimentaci�n baja de 4V
+ CONFIG IESO=OFF    // Reinicio sin cambio de reloj de interno a externo
+ CONFIG FCMEN=OFF   // Cambio de reloj externo a interno en caso de fallo
+ CONFIG LVP=ON	    // programaci�n en bajo voltaje permitida
+ 
+ ;configuration word 2
+ CONFIG WRT=OFF		// Protecci�n de autoescritura por el programa desactivada
+ CONFIG BOR4V=BOR40V	// Reinicio abajo de 4V, (BOR21V=2.1V)
+ 
+ PSECT udata_bank0 ; common memory
+    cont:	    DS  2	; 2 byte
+    display_aux:    DS	1	; 1 byte
+    resta:	    DS	1	; 1 byte
+    
+ PSECT resVect, class=CODE, abs, delta=2
+ 
+ ;------------------Reset--------------------
+ ORG 00h	; posici�n 0000h para el reset
+ resetVec:
+     PAGESEL main
+     goto main
+     
+ PSECT code, delta=2, abs
+ ORG 100h	; posici�n para el c�digo
+ 
+ tabla:
+    clrf    PCLATH
+    bsf	    PCLATH, 0	; PCLATH = 01	PCL = 02
+    andlw   0x0f
+    addwf   PCL		; PC = PCLATH + PCL + w
+    retlw   00111111B	; 0
+    retlw   00000110B	; 1
+    retlw   01011011B	; 2
+    retlw   01001111B	; 3
+    retlw   01100110B	; 4
+    retlw   01101101B	; 5
+    retlw   01111101B	; 6
+    retlw   00000111B	; 7
+    retlw   01111111B	; 8
+    retlw   01101111B	; 9
+    retlw   01110111B	; A
+    retlw   01111100B	; B
+    retlw   00111001B	; C
+    retlw   01011110B	; D
+    retlw   01111001B	; E
+    retlw   01110001B	; F
+    return
+ ;-------------configuraci�n------------------
+ main:
+    call    config_io
+    call    config_reloj
+    call    config_tmr0
+ ;-------------loop principal-----------------
+ loop:
+    call    contador_1s
+    
+    btfsc   PORTB, 0
+    call    inc_display		; aumentar el puerto a
+    btfsc   PORTB, 1
+    call    dec_display		; aumentar el puerto c
+    call    mostrar_display   
+        
+    call    comparar_0
+    
+    goto    loop
+ ;-------------sub rutinas--------------------
+ 
+ ;--------------------------- configuraciones ---------------------------------
+ config_io:
+    banksel ANSEL
+    clrf    ANSEL
+    clrf    ANSELH	; pines digitales
+    
+    banksel TRISA
+    clrf    TRISA	; puerto a como salida
+    clrf    TRISC	; puerto c como salida
+    clrf    TRISD	; puerto d como salida
+    clrf    TRISE	; puerto e como salida 
+    bsf	    TRISB, 0
+    bsf	    TRISB, 1	; puertos b (0 y 1) como entradas
+    
+    banksel PORTA
+    clrf    PORTA	; limpiar puerto a
+    clrf    PORTC	; limpiar puerto c
+    clrf    PORTD	; limpiar puerto d
+    clrf    PORTE	; limpiar puerto e
+    return
+ 
+ config_reloj:
+    banksel OSCCON
+    bsf	    OSCCON, 6
+    bcf	    OSCCON, 5
+    bcf	    OSCCON, 4	; 100, (1MHz)
+    bsf	    OSCCON, 0	; reloj interno
+    return
+    
+ config_tmr0:
+    banksel TRISA
+    bcf	    OPTION_REG, 5   ; reloj interno
+    bcf	    OPTION_REG, 3   ; prescaler
+    bsf	    OPTION_REG, 2   
+    bsf	    OPTION_REG, 1   
+    bsf	    OPTION_REG, 0   ; prescaler 111, (x256) 
+    
+    banksel PORTA
+    call    reiniciar_tmr0
+    return
+ 
+ reiniciar_tmr0:
+    movlw   158		; valor inicial para obtener saltos de 0.1s
+    movwf   TMR0	; almacenar valor inicial en TMR0
+    bcf	    INTCON, 2	; limpiar bandera de overflow
+    return
+ 
+ ;--------------------------- contadores --------------------------------------
+ contador_ms:
+    btfss   T0IF	    ; saltar si la bandera de overflow est� activada
+    goto    $-1
+    call    reiniciar_tmr0  ; reiniciar el valor del timer0
+    incf    PORTA	    ; incrementar puerto a
+    
+    btfsc   PORTA, 4	    ; chequear el bit 4 del puerto a
+    clrf    PORTA	    ; vaciar porta si pasa de 4 bits
+    return
+    
+ contador_1s:
+    movlw   10		    ; repetir 10 veces
+    movwf   cont	    ; asignar el 10 a variable cont
+    call    contador_ms	    ; llamar la subrutina del contador de 100ms
+    decfsz  cont,1	    ; decrementar variable cont mientras no sea 0
+    goto    $-2
+    incf    PORTD	    ; incrementar puerto d cada 1 segundo
+    
+    btfsc   PORTD, 4	    ; chequear el bit 4 del puerto d
+    clrf    PORTD	    ; vaciar porta si pasa de 4 bits
+
+    return
+ 
+ ;----------------------------- display ---------------------------------------
+ inc_display:
+    call    delay
+    ; antirebotes desactivado
+    /* btfsc   PORTB, 0	    ; incrementar el valor de display_aux cuando se
+    goto    $-1		    ; suelte el bot�n 0 del puerto b */
+    incf    display_aux
+    
+    btfsc   display_aux, 4  ; chequear el bit 4 de la variable display_aux
+    clrf    display_aux	    ; vaciar display_aux si pasa de 4 bits
+    return
+ 
+ dec_display:
+    call    delay
+    ; antirebotes desactivado
+    /* btfsc   PORTB, 1	    ; decrementar el valor dedisplay_aux cuando se
+    goto    $-1		    ; suelte el bot�n 1 del puerto b */
+    decf    display_aux
+    
+    btfsc   display_aux, 4  ; chequear el bit 4 de la variable display_aux
+    call    encender_display_aux    ; llenar display_aux si pasa de 4 bits
+    return
+ 
+ encender_display_aux:
+    clrf    display_aux	    ; apagar toda la variable display_aux
+    bsf	    display_aux, 0
+    bsf	    display_aux, 1
+    bsf	    display_aux, 2
+    bsf	    display_aux, 3  ; encender los 4 primeros bits de display_aux
+    return
+    
+ mostrar_display:
+    movf    display_aux, w  ; mover variable display_aux a w
+    call    tabla	    ; llamar conversi�n de la tabla
+    movwf   PORTC	    ; asignar conversi�n a puerto c
+    return
+ 
+ delay:
+    movlw   200		; valor inicial del delay
+    movwf   cont	; asignar a variable cont el valor inicial
+    decfsz  cont, 1	; bajar valor a cont
+    goto    $-1		; seguir bajando el valor de cont hasta 0
+    return
+ 
+ ;----------------------------- alarma --------------------------------------
+ restar_conts:
+    movf    display_aux, w  ; mover valor de display a w
+    subwf   PORTD, w	    ; sustraer valor de timer1seg a valor de display
+    movwf   resta	    ; pasar el valor de la resta a variable resta
+    return
+ 
+ actualizar_alarma:
+    incf    PORTE	; cambia valor de led de alarma
+    clrf    PORTD	; limpia el contador de segundos
+    return
+    
+ comparar_0:
+    call    restar_conts    ; almacenar en "resta" la diferencia de los conts 
+    
+    btfsc   resta,0
+    goto    $+16	; enviar a return si el bit no es 0
+    btfsc   resta,1
+    goto    $+14	; enviar a return si el bit no es 0
+    btfsc   resta,2
+    goto    $+12	; enviar a return si el bit no es 0
+    btfsc   resta,3
+    goto    $+10	; enviar a return si el bit no es 0
+    btfsc   resta,4
+    goto    $+8		; enviar a return si el bit no es 0
+    btfsc   resta,5
+    goto    $+6		; enviar a return si el bit no es 0
+    btfsc   resta,6
+    goto    $+4		; enviar a return si el bit no es 0
+    btfsc   resta,7
+    goto    $+2		; enviar a return si el bit no es 0
+    
+    call    actualizar_alarma	; cambiar valor de led
+    return
+ 
+ END
